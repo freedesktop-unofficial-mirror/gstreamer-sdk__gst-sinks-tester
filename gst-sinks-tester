@@ -1,0 +1,91 @@
+#!/usr/bin/env python
+# GstSinksTester - Interactive tests for GStreamer audio and video sinks
+# Copyright (C) 2012 Andoni Morales Alastruey <ylatuya@gmail.com>
+#
+# This library is free software; you can redistribute it and/or
+# modify it under the terms of the GNU Library General Public
+# License as published by the Free Software Foundation; either
+# version 2 of the License, or (at your option) any later version.
+#
+# This library is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# Library General Public License for more details.
+#
+# You should have received a copy of the GNU Library General Public
+# License along with this library; if not, write to the
+# Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+# Boston, MA 02111-1307, USA.
+
+import argparse
+import gettext
+import os
+import sys
+from datetime import datetime
+
+from gst_sink_test import Test
+
+_ = gettext.gettext
+N_ = lambda x: x
+
+
+description = N_('Runs interative tests for GStreamer audio and video sinks')
+
+
+class TestResults(object):
+
+    def __init__(self):
+        self.results = {}
+
+    def add_test(self, sink_name, caps, succeed):
+        succeed = succeed and 'SUCCESS' or 'ERROR'
+        self.results.setdefault(sink_name, []).append((caps, succeed))
+
+    def save(self, filename):
+        with open(filename, 'w+') as f:
+            for sink, tests in self.results.iteritems():
+                for test in tests:
+                    f.write('%s;%s;%s\n' % (test[1], sink, test[0]))
+
+
+class Main(object):
+
+    def __init__(self, args):
+        self.create_parser()
+        self.parse_arguments(args)
+        self.test_filename = os.path.join(self.output_dir, self.format_name())
+        self.run_tests()
+
+    def run_tests(self):
+        self.results = TestResults()
+        for sink in self.sinks:
+            test = Test(sink, self.results)
+            try:
+                test.run()
+            except KeyboardInterrupt:
+                self.results.save(self.test_filename)
+            except Exception:
+                continue
+            self.results.save(self.test_filename)
+
+    def format_name(self):
+        return '%s-%s.results' % ('-'.join(self.sinks),
+                datetime.now().isoformat().replace(':', '_'))
+
+    def create_parser(self):
+        ''' Creates the arguments parser '''
+        self.parser = argparse.ArgumentParser(description=_(description))
+        self.parser.add_argument('sinks', nargs='*',
+                    help=_('list of sinks to test'))
+        self.parser.add_argument('-o', '--output-dir', type=str, default='.',
+                    help=_('output directory for the test results'))
+
+    def parse_arguments(self, args):
+        ''' Parse the command line arguments '''
+        args = self.parser.parse_args(args)
+        self.sinks = args.sinks
+        self.output_dir = args.output_dir
+
+
+if __name__ == "__main__":
+    Main(sys.argv[1:])
