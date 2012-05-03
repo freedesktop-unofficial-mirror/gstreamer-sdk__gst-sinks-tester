@@ -17,6 +17,7 @@
 # Boston, MA 02111-1307, USA.
 
 import copy
+import sys
 
 import gst
 import gtk
@@ -221,13 +222,15 @@ class VideoSinkTest(BaseSinkTest):
         self.video.queue_draw_area(0, 0, width, height)
 
     def set_xwindow_id(self, sink):
+        if sys.platform.startswith('win'):
+            # It seems there is bug in Gdk.Window.Handle when calling
+            # ensure_native()
+            return
         gtk.gdk.threads_enter()
-        try:
-            # Linux
-            wid = self.video.window.xid
-        except AttributeError:
-            # Windows
+        if sys.platform.startswith('win'):
             wid = self.video.window.handle
+        else:
+            wid = self.video.window.xid
         sink.set_xwindow_id(wid)
         self._redraw()
         gtk.gdk.threads_leave()
