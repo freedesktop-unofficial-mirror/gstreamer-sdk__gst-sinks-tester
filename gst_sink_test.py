@@ -203,17 +203,15 @@ class VideoSinkTest(BaseSinkTest):
 
     def _prepare_pipeline(self):
         bus = self.pipeline.get_bus()
-        bus.add_signal_watch()
-        bus.connect("message", self.on_message)
+        bus.set_sync_handler(self.bus_handler)
 
-    def on_message(self, bus, message):
-        if message.structure is None:
-            return
-        message_name = message.structure.get_name()
-        if message_name == "prepare-xwindow-id":
-            sink = message.src
-            sink.set_property("force-aspect-ratio", True)
-            self.set_xwindow_id(sink)
+    def bus_handler(self, bus, message):
+        if message.type == gst.MESSAGE_ELEMENT:
+            if message.structure.get_name() == "prepare-xwindow-id":
+                sink = message.src
+                sink.set_property("force-aspect-ratio", True)
+                self.set_xwindow_id(sink)
+        return gst.BUS_PASS
 
     def _redraw(self):
         x, y, width, height = self.video.get_allocation()
