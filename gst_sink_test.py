@@ -18,14 +18,13 @@
 
 import copy
 
-import pygst
-pygst.require('0.10')
 import gst
+import gtk
 
 
 class BaseSinkTest(object):
 
-    pipeline = '%(source)s ! capsfilter name=filter ! %(sink)s'
+    pipeline_tpl = '%(source)s ! capsfilter name=filter ! %(sink)s name=sink'
     source = ''
     nbuf = 25
     sink = ''
@@ -36,39 +35,90 @@ class BaseSinkTest(object):
         sink = gst.element_factory_make(sink_name, 'sink')
         if not sink:
             raise Exception("Sink %s not found" % sink_name)
-        self.find_supported_caps()
-        self.parse_caps()
+        self._find_supported_caps()
+        self._parse_caps()
+        self._create_window()
 
     def run(self):
-        for caps in self.caps:
-            pipeline = gst.parse_launch(self.format_pipeline(caps))
-            caps_filter = pipeline.get_by_name('filter')
-            caps_filter.set_property('caps', caps)
-            pipeline.set_state(gst.STATE_PLAYING)
-            state = pipeline.get_state()
-            print "Running test for %s with caps %s" % (self.sink_name, caps)
-            if state[0] == gst.STATE_CHANGE_FAILURE:
-                self.test_results.add_test(self.sink_name, caps, False)
-                print "Test failed"
-                continue
-            res = self.prompt("Is it working???:", ['y', 'n'])
-            self.test_results.add_test(self.sink_name, caps, res=='y')
-            pipeline.set_state(gst.STATE_NULL)
+        self.window.show_all()
+        self.test_index = 0
+        self._run_next_test()
 
-    def prompt(self, message, options=[]):
-        ''' Prompts the user for input with the message and options '''
-        if len(options) != 0:
-            message = "%s [%s]" % (message, '/'.join(options))
-        res = raw_input(message)
-        while res not in [str(x) for x in options]:
-            res = raw_input(message)
-        return res
+    def _run_next_test(self):
+        self.test_index += 1
+        if self.test_index > len(self.caps):
+            return self._quit()
+        self.cur_caps = self.caps[self.test_index - 1]
+        self.pipeline = gst.parse_launch(self._format_pipeline(self.cur_caps))
+        caps_filter = self.pipeline.get_by_name('filter')
+        caps_filter.set_property('caps', self.cur_caps)
+        self._prepare_pipeline()
+        self.pipeline.set_state(gst.STATE_PLAYING)
+        state = self.pipeline.get_state()
+        print "Running test for %s with caps %s" % (self.sink_name, self.cur_caps)
+        if state[0] == gst.STATE_CHANGE_FAILURE:
+            self.test_results.add_test(self.sink_name, self.cur_caps, False)
+            self._button_clicked(self.nobutton, False)
+        else:
+            self._set_buttons_sensitive(True)
 
-    def format_pipeline(self, caps):
-        return self.pipeline % {'source':self.source, 'nbuf': self.nbuf,
+    def _prepare_pipeline(self):
+        pass
+
+    def _create_window(self):
+        self.window = gtk.Window(gtk.WINDOW_TOPLEVEL)
+        self.window.connect("delete_event", self._delete_event)
+        self.window.connect("destroy", self._destroy)
+
+        # Create widgets
+        vbox = gtk.VBox()
+        self.video = gtk.DrawingArea()
+        label = gtk.Label('Is it working?')
+        buttonsbox = gtk.HBox()
+        self.yesbutton = gtk.Button(stock='gtk-yes')
+        self.nobutton = gtk.Button(stock='gtk-no')
+
+        # Connect signals
+        self.window.connect('delete_event', self._delete_event)
+        self.window.connect('destroy', self._destroy)
+        self.yesbutton.connect('clicked', self._button_clicked, True)
+        self.nobutton.connect('clicked', self._button_clicked, False)
+
+        # Pack
+        buttonsbox.pack_start(self.yesbutton, expand=True, fill=True)
+        buttonsbox.pack_start(self.nobutton, expand=True, fill=True)
+        vbox.pack_start(self.video, expand=True, fill=True)
+        vbox.pack_start(label, expand=False, fill=True)
+        vbox.pack_start(buttonsbox, expand=False, fill=True)
+        self.window.add(vbox)
+        self.window.set_position(gtk.WIN_POS_CENTER)
+        self.window.resize(320, 240)
+
+    def _quit(self):
+        self.test_results.save()
+        gtk.mainquit()
+
+    def _delete_event(self, widget, event, data=None):
+        return gtk.FALSE
+
+    def _destroy(self, widget, data=None):
+        self._quit()
+
+    def _button_clicked(self, widget, result):
+        self.test_results.add_test(self.sink_name, self.cur_caps, result)
+        self.pipeline.set_state(gst.STATE_NULL)
+        self._set_buttons_sensitive(False)
+        self._run_next_test()
+
+    def _set_buttons_sensitive(self, sensitive):
+        self.yesbutton.set_sensitive(sensitive)
+        self.nobutton.set_sensitive(sensitive)
+
+    def _format_pipeline(self, caps):
+        return self.pipeline_tpl % {'source':self.source, 'nbuf': self.nbuf,
                 'caps':caps, 'sink': self.sink_name}
 
-    def find_supported_caps(self):
+    def _find_supported_caps(self):
         sink = gst.parse_launch('%s name=sink' % self.sink_name)
         sink.set_state(gst.STATE_READY)
         sink.get_state()
@@ -77,7 +127,7 @@ class BaseSinkTest(object):
             self.sink_caps.append(pad.get_caps())
         sink.set_state(gst.STATE_NULL)
 
-    def parse_caps(self):
+    def _parse_caps(self):
         structs = []
         for caps in self.sink_caps:
             for struct in caps:
@@ -104,14 +154,17 @@ class BaseSinkTest(object):
             if name == 'framerate':
                 val = [gst.Fraction(25, 1)]
             elif hasattr(val, 'type'):
-                if val.type == 'fourcc':
-                    val = [val]
-                elif val.type == 'intrange':
+                if val.type == 'intrange':
                     if name == 'width' or name == 'height':
                         val.low = max(val.low, 120)
                         val.high = min(val.high, 1280)
+                    elif name == 'rate':
+                        val.low = max(val.low, 4000)
+                        val.high = min(val.high, 96000)
                     val = [val.low, val.low + (val.high - val.low) / 2,
                            val.high]
+                else:
+                    val = [val]
             elif not isinstance(val, list):
                 val = [val]
             parsed_struct[name] = val
@@ -147,6 +200,14 @@ class AudioSinkTest(BaseSinkTest):
 
 class VideoSinkTest(BaseSinkTest):
     source = 'videotestsrc'
+
+    def _prepare_pipeline(self):
+        sink = self.pipeline.get_by_name('sink')
+        try:
+            wid = self.video.window.xid
+        except AttributeError:
+            wid = self.video.window.handle
+        sink.set_xwindow_id(wid)
 
 
 class Test(object):
