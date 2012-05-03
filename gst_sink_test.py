@@ -202,12 +202,37 @@ class VideoSinkTest(BaseSinkTest):
     source = 'videotestsrc'
 
     def _prepare_pipeline(self):
-        sink = self.pipeline.get_by_name('sink')
+        bus = self.pipeline.get_bus()
+        bus.add_signal_watch()
+        bus.connect("message", self.on_message)
+
+    def on_message(self, bus, message):
+        if message.structure is None:
+            return
+        message_name = message.structure.get_name()
+        if message_name == "prepare-xwindow-id":
+            sink = message.src
+            sink.set_property("force-aspect-ratio", True)
+            self.set_xwindow_id(sink)
+
+    def _redraw(self):
+        x, y, width, height = self.video.get_allocation()
+        pixmap = gtk.gdk.Pixmap(self.video.window, width, height)
+        pixmap.draw_rectangle(self.video.get_style().black_gc,
+                              True, 0, 0, width, height)
+        self.video.queue_draw_area(0, 0, width, height)
+
+    def set_xwindow_id(self, sink):
+        gtk.gdk.threads_enter()
         try:
+            # Linux
             wid = self.video.window.xid
         except AttributeError:
+            # Windows
             wid = self.video.window.handle
         sink.set_xwindow_id(wid)
+        self._redraw()
+        gtk.gdk.threads_leave()
 
 
 class Test(object):
